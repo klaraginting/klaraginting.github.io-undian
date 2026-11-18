@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spin Wheel Kelompok</title>
+<style>
+  :root { --ink:#20243a; --accent:#ffca3a; --blue:#4361ee; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; padding:28px 16px;
+    font-family:Arial, Helvetica, sans-serif; color:var(--ink);
+    background:linear-gradient(135deg,#eef2ff,#fff7e6);
+  }
+  .app { max-width:1050px; margin:auto; display:grid; grid-template-columns:minmax(300px,1.15fr) minmax(280px,.85fr); gap:28px; align-items:center; }
+  h1 { text-align:center; margin:0 0 8px; font-size:clamp(25px,4vw,36px); }
+  .subtitle { text-align:center; color:#62677d; margin:0 0 22px; }
+  .wheel-area { display:flex; flex-direction:column; align-items:center; }
+  .wheel-wrap { width:min( min(78vw, 590px), 100%); aspect-ratio:1; position:relative; }
+  canvas { width:100%; height:100%; display:block; filter:drop-shadow(0 12px 18px #29305a26); }
+  .pointer {
+    position:absolute; z-index:2; left:50%; top:-8px; transform:translateX(-50%);
+    width:0;height:0;border-left:17px solid transparent;border-right:17px solid transparent;
+    border-top:34px solid #20243a; filter:drop-shadow(0 3px 2px #0003);
+  }
+  .spin-button {
+    position:absolute; z-index:3; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:clamp(76px,18%,108px); aspect-ratio:1; border-radius:50%;
+    border:7px solid #fff; background:var(--accent); color:#20243a;
+    font-size:clamp(15px,2.5vw,20px); font-weight:900; letter-spacing:1px;
+    cursor:pointer; box-shadow:0 4px 12px #0003;
+  }
+  .spin-button:disabled { opacity:.65; cursor:wait; }
+  .result { min-height:32px; margin-top:18px; font-size:21px; font-weight:800; text-align:center; color:#3046b5; }
+  .panel { background:#fff; padding:24px; border-radius:20px; box-shadow:0 10px 30px #29305a12; }
+  label { display:block; font-weight:800; margin-bottom:9px; }
+  textarea {
+    width:100%; min-height:210px; resize:vertical; padding:13px 14px;
+    border:1px solid #d7dced; border-radius:12px; font:15px/1.6 Arial,sans-serif;
+    outline:none;
+  }
+  textarea:focus { border-color:var(--blue); box-shadow:0 0 0 3px #4361ee20; }
+  .hint { font-size:13px; line-height:1.5; color:#666d82; margin:9px 0 16px; }
+  .apply {
+    width:100%; padding:13px 16px; border:0; border-radius:12px;
+    background:var(--blue); color:white; font-size:15px; font-weight:800; cursor:pointer;
+  }
+  .names-title { display:flex; justify-content:space-between; align-items:center; margin:20px 0 10px; font-weight:800; }
+  .name-list { display:flex; flex-wrap:wrap; gap:8px; max-height:190px; overflow:auto; }
+  .chip { padding:7px 11px; border-radius:999px; background:#eef1ff; color:#3546a0; font-size:13px; }
+  .empty { color:#85899a; font-size:14px; }
+  @media (max-width:760px) {
+    .app { grid-template-columns:1fr; max-width:600px; gap:18px; }
+    .wheel-wrap { width:min(86vw,500px); }
+    .panel { padding:20px; }
+  }
+</style>
+</head>
+<body>
+  <main class="app">
+    <section class="wheel-area">
+      <h1>🎯 Spin the Wheel!</h1>
+      <p class="subtitle">Putar roda untuk menentukan kelompok</p>
+      <div class="wheel-wrap">
+        <div class="pointer"></div>
+        <canvas id="wheel" width="900" height="900" aria-label="Roda undian"></canvas>
+        <button class="spin-button" id="spin">SPIN</button>
+      </div>
+      <div class="result" id="result" aria-live="polite">Siap untuk spin?</div>
+    </section>
+
+    <section class="panel">
+      <label for="names">Daftar nama / kelompok</label>
+      <textarea id="names" spellcheck="false">Kelompok 1
+Kelompok 2
+Kelompok 3
+Kelompok 4
+Kelompok 5
+Kelompok 6</textarea>
+      <p class="hint">
+        Tulis satu nama per baris. Nama biasa tanpa koma. Tambahkan koma di akhir nama yang ingin dipastikan menang, contoh: <b>Kelompok 5,</b>.
+        Koma hanya menjadi penanda dan tidak akan ditampilkan.
+      </p>
+      <button class="apply" id="apply">PERBARUI RODA</button>
+      <div class="names-title"><span>Nama pada roda</span><span id="count">6 nama</span></div>
+      <div class="name-list" id="nameList"></div>
+    </section>
+  </main>
+
+<script>
+(() => {
+  const canvas = document.getElementById('wheel');
+  const ctx = canvas.getContext('2d');
+  const spinButton = document.getElementById('spin');
+  const textarea = document.getElementById('names');
+  const result = document.getElementById('result');
+  const nameList = document.getElementById('nameList');
+  const count = document.getElementById('count');
+  const colors = ['#ff595e','#ffca3a','#8ac926','#1982c4','#6a4c93','#f9844a','#43aa8b','#577590','#f15bb5','#00bbf9'];
+  let entries = [];
+  let rotation = 0;
+  let spinning = false;
+
+  function parseNames() {
+    return textarea.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      const marked = line.endsWith(',');
+      return { name: marked ? line.slice(0, -1).trim() : line, marked };
+    }).filter(item => item.name);
+  }
+
+  function renderList() {
+    nameList.innerHTML = '';
+    count.textContent = `${entries.length} nama`;
+    if (!entries.length) {
+      nameList.innerHTML = '<span class="empty">Belum ada nama.</span>';
+      return;
+    }
+    entries.forEach(item => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = item.name;
+      nameList.appendChild(chip);
+    });
+  }
+
+  function drawWheel() {
+    const n = entries.length;
+    ctx.clearRect(0, 0, 900, 900);
+    if (!n) {
+      ctx.beginPath(); ctx.arc(450,450,420,0,Math.PI*2); ctx.fillStyle='#e5e8f2'; ctx.fill();
+      ctx.fillStyle='#73798c'; ctx.font='bold 34px Arial'; ctx.textAlign='center';
+      ctx.fillText('Tambahkan nama',450,460);
+      return;
+    }
+    const arc = Math.PI * 2 / n;
+    ctx.save();
+    ctx.translate(450,450);
+    ctx.rotate(rotation);
+    for (let i=0; i<n; i++) {
+      const start = -Math.PI/2 + i*arc;
+      const end = start + arc;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,420,start,end); ctx.closePath();
+      ctx.fillStyle = colors[i % colors.length]; ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=5; ctx.stroke();
+
+      ctx.save();
+      ctx.rotate(start + arc/2);
+      ctx.textAlign='right'; ctx.textBaseline='middle';
+      const fontSize = Math.max(18, Math.min(32, 390 / Math.max(1,n*0.55)));
+      ctx.font=`bold ${fontSize}px Arial`;
+      ctx.fillStyle='#fff';
+      ctx.shadowColor='#0006'; ctx.shadowBlur=3;
+      let label = entries[i].name;
+      const maxChars = n > 14 ? 13 : n > 9 ? 18 : 25;
+      if (label.length > maxChars) label = label.slice(0,maxChars-1)+'…';
+      ctx.fillText(label,385,0);
+      ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(0,0,420,0,Math.PI*2);
+    ctx.strokeStyle='#fff'; ctx.lineWidth=12; ctx.stroke();
+    ctx.restore();
+  }
+
+  function updateWheel() {
+    entries = parseNames();
+    rotation = 0;
+    result.textContent = entries.length ? 'Siap untuk spin?' : 'Masukkan minimal satu nama.';
+    spinButton.disabled = entries.length === 0;
+    renderList();
+    drawWheel();
+  }
+
+  function spin() {
+    if (spinning || !entries.length) return;
+    spinning = true;
+    spinButton.disabled = true;
+    const markedIndices = entries.map((e,i) => e.marked ? i : -1).filter(i => i >= 0);
+    const winnerIndex = markedIndices.length
+      ? markedIndices[Math.floor(Math.random() * markedIndices.length)]
+      : Math.floor(Math.random() * entries.length);
+
+    // Pointer berada di atas. Atur sudut akhir agar irisan pemenang tepat di bawah pointer.
+    const arc = Math.PI * 2 / entries.length;
+    const targetAtCenter = -Math.PI/2 + (winnerIndex + 0.5) * arc;
+    const currentMod = ((rotation % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+    const desiredMod = ((-Math.PI/2 - targetAtCenter) % (Math.PI*2) + Math.PI*2) % (Math.PI*2);
+    const delta = (desiredMod - currentMod + Math.PI*2) % (Math.PI*2);
+    const start = rotation;
+    const total = Math.PI*2*6 + delta;
+    const duration = 4300;
+    const startTime = performance.now();
+
+    function animate(now) {
+      const t = Math.min(1, (now-startTime)/duration);
+      const eased = 1 - Math.pow(1-t, 4);
+      rotation = start + total*eased;
+      drawWheel();
+      if (t < 1) requestAnimationFrame(animate);
+      else {
+        rotation = ((rotation % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+        const winner = entries[winnerIndex];
+        result.textContent = `🎉 Terpilih: ${winner.name}!`;
+        if (winner.marked) {
+          winner.marked = false;
+          // Hapus koma penanda dari sumber input; nama tetap tampil tanpa koma.
+          const lines = textarea.value.split(/\r?\n/);
+          let found = false;
+          textarea.value = lines.map(line => {
+            if (!found && line.trim().endsWith(',') && line.trim().slice(0,-1).trim() === winner.name) {
+              found = true;
+              return line.replace(/,\s*$/, '');
+            }
+            return line;
+          }).join('\n');
+          renderList();
+        }
+        spinning = false;
+        spinButton.disabled = entries.length === 0;
+      }
+    }
+    requestAnimationFrame(animate);
+  }
+
+  document.getElementById('apply').addEventListener('click', updateWheel);
+  spinButton.addEventListener('click', spin);
+  updateWheel();
+})();
+</script>
+</body>
+</html>
